@@ -7,12 +7,14 @@ import { ResponseTransformerInterceptor } from './common/interceptors/response-t
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigurationService } from './configuration/configuration.service';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import * as path from 'path';
 
 async function bootstrap() {
   try {
-    
+
     // Now we can connect to our target database
-    const app = await NestFactory.create(AppModule);
+    const app = await NestFactory.create<NestExpressApplication>(AppModule);
     const configService = app.get(ConfigService);
     const port = configService.get('PORT', 4000);
     
@@ -27,6 +29,15 @@ async function bootstrap() {
     
     // Enable CORS
     app.enableCors();
+
+    // Serve local-storage uploads (multer writes them under <cwd>/uploads, see
+    // file-validation.config.ts) at the path stored in media/lesson records,
+    // prefixed so the gateway can route it: /lms-service/uploads/lessons/media/<file>
+    app.useStaticAssets(path.resolve(process.cwd(), 'uploads'), {
+      prefix: '/lms-service/uploads/',
+      index: false,
+      dotfiles: 'deny',
+    });
     
     // Set global pipes
     app.useGlobalPipes(
