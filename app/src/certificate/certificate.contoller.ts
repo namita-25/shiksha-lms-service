@@ -361,7 +361,7 @@ export class CertificateController {
   @ApiOkResponse({ description: 'Cron job status retrieved successfully' })
   @ApiInternalServerErrorResponse({ description: 'Internal Server Error.' })
   @Get('cron/status')
-  async getCronStatus(@Res() response: Response) {
+  getCronStatus(@Res() response: Response) {
     try {
       const status = this.certificateCronService.getCronStatus();
       return response.status(200).json({

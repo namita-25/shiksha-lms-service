@@ -234,7 +234,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
         endTime: new Date().toISOString(),
       };
 
-      await this.logExecutionSummary(executionId, executionSummary);
+      this.logExecutionSummary(executionId, executionSummary);
       CertificateLogger.logExecutionSummary(executionSummary);
 
       return batchResults;
@@ -243,7 +243,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
         `Error in certificate issuance process [Execution ID: ${executionId}]:`,
         error.message,
       );
-      await this.logExecutionError(executionId, error);
+      this.logExecutionError(executionId, error);
       return {
         totalProcessed: 0,
         totalIssued: 0,
@@ -320,7 +320,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
     let totalErrors = 0;
 
     let batchIndex = 0;
-    for await (const batch of batches) {
+    for (const batch of batches) {
       batchIndex++;
       this.loggerService.log(
         `Processing batch ${batchIndex}/${batches.length} (${batch.length} users)`,
@@ -461,7 +461,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
   }> {
     try {
       // Validate external service connectivity with optimized timeout
-      const serviceHealth = await this.validateExternalServicesHealth();
+      const serviceHealth = this.validateExternalServicesHealth();
       if (!serviceHealth.allHealthy) {
         // Log warning but don't block if it's a connection error (service might be temporarily down)
         this.loggerService.warn(
@@ -473,7 +473,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Check system resources
-      const resourceCheck = await this.validateSystemResources();
+      const resourceCheck = this.validateSystemResources();
       if (!resourceCheck.isValid) {
         return { isValid: false, reason: resourceCheck.reason };
       }
@@ -505,8 +505,6 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
       // Get environment variables
       const tenantId =
         process.env.TENANT_ID || 'ef99949b-7f3a-4a5f-806a-e67e683e38f3';
-      const academicYearId =
-        process.env.ACADEMIC_YEAR_ID || '9a9e0daa-50dd-4d0e-8d10-36e7bc808f88';
       const organisationId =
         process.env.ORGANISATION_ID || 'd36d9079-0f42-4ba3-be03-26c9e79509ee';
 
@@ -598,13 +596,9 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
               firstName: item.firstName || '',
               lastName: item.lastName || '',
               certificateIssuedDate: item.certificateIssuedDate,
-              certificateIssueDateTime: course.certificateIssueDateTime
-                ? typeof course.certificateIssueDateTime === 'string'
-                  ? course.certificateIssueDateTime
-                  : new Date(
-                      course.certificateIssueDateTime as Date,
-                    ).toISOString()
-                : undefined,
+              certificateIssueDateTime: this.toIsoDateString(
+                course.certificateIssueDateTime,
+              ),
               certificateIssued: item.certificateIssued || false,
             }),
           );
@@ -614,12 +608,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
           }
 
           const courseIssueDt = course.certificateIssueDateTime;
-          const issueFromCourse =
-            courseIssueDt != null && courseIssueDt !== ''
-              ? typeof courseIssueDt === 'string'
-                ? courseIssueDt
-                : new Date(courseIssueDt as Date).toISOString()
-              : undefined;
+          const issueFromCourse = this.toIsoDateString(courseIssueDt);
           for (const u of users) {
             if (issueFromCourse) {
               u.certificateIssueDateTime = issueFromCourse;
@@ -743,11 +732,6 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
             let skipType: 'condition' | 'exists' | 'other' = 'condition';
             if (skipReason.includes('Certificate already exists')) {
               skipType = 'exists';
-            } else if (
-              skipReason.includes('Event criteria') ||
-              skipReason.includes('date validation')
-            ) {
-              skipType = 'condition';
             }
 
             // Log detailed skip information to failure log
@@ -876,10 +860,10 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
    * Validate external services health
    * Optimized with shorter timeout and better error handling
    */
-  private async validateExternalServicesHealth(): Promise<{
+  private validateExternalServicesHealth(): {
     allHealthy: boolean;
     unhealthyServices: string[];
-  }> {
+  } {
     // LMS Service is internal (running in-process)
     return {
       allHealthy: true,
@@ -891,10 +875,10 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
    * Validate system resources
    * Optimized for large-scale processing (4-5K users)
    */
-  private async validateSystemResources(): Promise<{
+  private validateSystemResources(): {
     isValid: boolean;
     reason?: string;
-  }> {
+  } {
     try {
       // Check memory usage with higher threshold for large batches
       const memUsage = process.memoryUsage();
@@ -986,7 +970,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
       );
       if (user.cohortId) {
         const eventCriteria =
-          (cohortEventCriteriaMap && cohortEventCriteriaMap[user.cohortId]) ??
+          cohortEventCriteriaMap?.[user.cohortId] ??
           1;
 
         if (eventCriteria === 0) {
@@ -1337,7 +1321,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
           { excludeAcknowledgementFromResults: false },
         );
 
-      if (existingCertificates && existingCertificates.data) {
+      if (existingCertificates?.data) {
         const certificates = Array.isArray(existingCertificates.data)
           ? existingCertificates.data
           : [existingCertificates.data];
@@ -1507,8 +1491,6 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
     // More accurate time estimate considering concurrency
     // Each user takes ~2-3 seconds (including API calls, DB operations)
     const timePerUser = 2500; // 2.5 seconds per user (optimized estimate)
-    const timePerConcurrentGroup =
-      (timePerUser * concurrentUsers) / concurrentUsers; // Parallel processing
     const timePerBatch = timePerUser * usersPerConcurrentGroup; // Sequential groups within batch
     const delayBetweenBatches = 2000; // 2 seconds delay between batches
     const delayBetweenConcurrentGroups = 500; // 0.5 seconds between concurrent groups
@@ -1556,7 +1538,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
   /**
    * Log execution summary for monitoring
    */
-  private async logExecutionSummary(
+  private logExecutionSummary(
     executionId: string,
     summary: {
       totalProcessed: number;
@@ -1567,7 +1549,7 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
       startTime: string;
       endTime: string;
     },
-  ): Promise<void> {
+  ): void {
     try {
       const summaryData = {
         ...summary,
@@ -1599,10 +1581,10 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
   /**
    * Log execution error
    */
-  private async logExecutionError(
+  private logExecutionError(
     executionId: string,
     error: Error,
-  ): Promise<void> {
+  ): void {
     try {
       const errorData = {
         message: error.message,
@@ -1744,6 +1726,12 @@ export class CertificateCronService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get cron job status
    */
+  /** Normalises a Date/string timestamp to an ISO string; undefined when empty. */
+  private toIsoDateString(value: unknown): string | undefined {
+    if (value == null || value === '') return undefined;
+    return typeof value === 'string' ? value : new Date(value as Date).toISOString();
+  }
+
   getCronStatus(): {
     isRunning: boolean;
     isScheduled: boolean;

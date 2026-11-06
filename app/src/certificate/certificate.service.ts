@@ -53,6 +53,15 @@ interface CertificatePdfSubject {
 /** A request that cannot be served: [message, error code, HTTP status]. */
 type CertificatePdfFailure = { failure: [string, string, HttpStatus] };
 
+/** Strips leading and trailing slashes (linear-time, avoids regex backtracking). */
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === '/') start++;
+  while (end > start && value[end - 1] === '/') end--;
+  return value.slice(start, end);
+}
+
 @Injectable()
 export class CertificateService implements OnModuleInit, OnModuleDestroy {
   /** Reused Chromium instance for PDF/image generation (one process per app). */
@@ -68,7 +77,7 @@ export class CertificateService implements OnModuleInit, OnModuleDestroy {
   private pooledBrowserIdleCheckInterval: NodeJS.Timeout | null = null;
   private readonly POOLED_BROWSER_IDLE_TIMEOUT_MS = Math.max(
     60_000,
-    (parseInt(process.env.PUPPETEER_IDLE_TIMEOUT_MINUTES || '10', 10) || 10) *
+    (Number.parseInt(process.env.PUPPETEER_IDLE_TIMEOUT_MINUTES || '10', 10) || 10) *
       60_000,
   );
 
@@ -2165,11 +2174,9 @@ export class CertificateService implements OnModuleInit, OnModuleDestroy {
 
     let pdfUrl: string;
     try {
-      const prefix = (
-        process.env.AWS_STORAGE_CERTIFICATE_PREFIX || 'certificates/'
-      )
-        .replace(/^\/+/, '')
-        .replace(/\/+$/, '');
+      const prefix = trimSlashes(
+        process.env.AWS_STORAGE_CERTIFICATE_PREFIX || 'certificates/',
+      );
       // Deterministic key: a retry after a failed DB save overwrites instead of orphaning files
       const fileName = `certificate-${ctx.userId}-${ctx.contextId}-${certificate.certificateId}.pdf`;
       pdfUrl = await this.s3Service.uploadFile(
@@ -2294,7 +2301,7 @@ export class CertificateService implements OnModuleInit, OnModuleDestroy {
 
       const prefix =
         process.env.AWS_STORAGE_CERTIFICATE_PREFIX || 'certificates/';
-      const cleanPrefix = prefix.replace(/^\/+/, '').replace(/\/+$/, '');
+      const cleanPrefix = trimSlashes(prefix);
       const fileName = `certificate-${userId}-${courseId}-${credentialId}-${Date.now()}.png`;
       const s3Key = `${cleanPrefix}/${fileName}`;
 
@@ -2499,12 +2506,12 @@ export class CertificateService implements OnModuleInit, OnModuleDestroy {
    * Unlike getCertificateTypeByTemplateId, which takes the credentials-service templateId.
    * @returns Promise<Templates | null> - null when the id is empty, not a UUID or not found
    */
-  async getTemplateByTemplatesId(
+  getTemplateByTemplatesId(
     templatesId: string | null | undefined,
   ): Promise<Templates | null> {
     // templatesId is a uuid column; a non-UUID value would make Postgres throw
     if (!templatesId || !isUUID(templatesId)) {
-      return null;
+      return Promise.resolve(null);
     }
     return this.templatesRepository.findOne({
       where: { templatesId },
@@ -2691,7 +2698,7 @@ export class CertificateService implements OnModuleInit, OnModuleDestroy {
       try {
         const token = request.headers['authorization'].replace('Bearer ', '');
         // Check if token is a valid JWT format (has 3 parts separated by dots)
-        if (token && token.split('.').length === 3) {
+        if (token?.split('.').length === 3) {
           const payload = JSON.parse(
             Buffer.from(token.split('.')[1], 'base64').toString(),
           );
@@ -3232,8 +3239,8 @@ export class CertificateService implements OnModuleInit, OnModuleDestroy {
       };
 
       // Determine response status
-      let httpStatus = HttpStatus.OK;
-      let message = 'Course templates processed successfully';
+      let httpStatus: HttpStatus;
+      let message: string;
 
       if (errorCount > 0 && successCount === 0) {
         // All failed
@@ -3406,12 +3413,12 @@ export class CertificateService implements OnModuleInit, OnModuleDestroy {
         limit,
         offset = 0,
       } = filters;
-      const isAllocated =
-        typeof isAllocatedProp === 'boolean'
-          ? isAllocatedProp
-          : typeof filters.isAllowcated === 'boolean'
-            ? filters.isAllowcated
-            : undefined;
+      let isAllocated: boolean | undefined;
+      if (typeof isAllocatedProp === 'boolean') {
+        isAllocated = isAllocatedProp;
+      } else if (typeof filters.isAllowcated === 'boolean') {
+        isAllocated = filters.isAllowcated;
+      }
 
       // Validate template type if provided
       if (templateType) {
@@ -4172,22 +4179,13 @@ export class CertificateService implements OnModuleInit, OnModuleDestroy {
       // Response structure: result.getUserDetails[0].firstName and result.getUserDetails[0].lastName
       const userData = response.data?.result;
       if (userData?.name) {
-        if (userData && userData.name) {
-          this.loggerService.log(
-            `Successfully fetched user details: name=${
-              userData.name || 'null'
-            }, lastName=""`,
-          );
-          return {
-            firstName: userData.name || '',
-            lastName: '',
-          };
-        } else {
-          this.loggerService.warn(
-            `User Service response does not contain firstName/lastName for userId: ${userId}`,
-          );
-          return null;
-        }
+        this.loggerService.log(
+          `Successfully fetched user details: name=${userData.name}, lastName=""`,
+        );
+        return {
+          firstName: userData.name,
+          lastName: '',
+        };
       } else {
         this.loggerService.warn(
           `User Service response does not contain getUserDetails array or is empty for userId: ${userId}`,
